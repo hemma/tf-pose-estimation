@@ -1,3 +1,5 @@
+tensorflow
+tensorflow-gpu
 argparse
 dill
 fire
