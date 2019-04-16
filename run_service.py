@@ -1,17 +1,20 @@
-import os
-import time
-import hashlib
-import json
-import paho.mqtt.client as mqtt
-import logging
-import jsonschema
 
-import numpy as np
+import json
+import time
+from threading import Thread
+
+import paho.mqtt.client as mqtt
+import tensorflow as tf
+import cv2
+from tf_pose.estimator import TfPoseEstimator
+from tf_pose.networks import get_graph_path, model_wh
+
 SERVICE_NAME = "tf-pose"
 
 
 def rpc(client, userdata, message):
     try:
+        print('Got message %s' % (message.payload.decode('utf-8'),))
         request = json.loads(message.payload.decode('utf-8'))
         reply_to = request.get('replyTo', 'error')
         method = request['method']
@@ -24,10 +27,10 @@ def rpc(client, userdata, message):
         else:
             raise ValueError("Unknown method '{}'".format(method))
         response['apiVersion'] = 'beta'
-        response['context'] = request['context']
-        response['method'] = method
+        #response['context'] = request['context']
+        #response['method'] = method
         response['serviceName'] = SERVICE_NAME
-    except jsonschema.ValidationError as e:
+    except Exception as e:
         print(e)
         error_msg = _generate_error_message(e)
         response = {'context': request.get('context', ''),
@@ -62,6 +65,8 @@ def _generate_error_message(error):
 
 def start_stream(params, client):
     try:
+        Thread(name='publisher', target=on_stream, args=(client, params)).start()
+
         response = {'data': {'streamId': 'stream_id'}}
     except Exception as e:
         print(e)
@@ -69,34 +74,49 @@ def start_stream(params, client):
     return response
 
 
+def on_stream(client, params):
+    print(params)
+    gpu_options = tf.GPUOptions()
+    gpu_options.allow_growth = True
+
+    w, h = model_wh(params['resize'])
+    if w > 0 and h > 0:
+        e = TfPoseEstimator(get_graph_path(params['model']), target_size=(w, h),
+                            tf_config=tf.ConfigProto(gpu_options=gpu_options))
+    else:
+        e = TfPoseEstimator(get_graph_path(params['model']), target_size=(432, 368),
+                            tf_config=tf.ConfigProto(gpu_options=gpu_options))
+    cam = cv2.VideoCapture(params['camera'])
+    ret_val, image = cam.read()
+
+    while True:
+        ret_val, image = cam.read()
+        humans = e.inference(image, resize_to_default=(w > 0 and h > 0), upsample_size=params['resize_out_ratio'])
+        str_humans = '; '.join([str(x) for x in humans])
+        client.publish(SERVICE_NAME + '/pose', str_humans)
+
+
 def on_connect(client, userdata, flags, rc):
-    route_in_keys = userdata['route_in_keys']
-    print('Client connected -- Listening to routes: {}'.format(route_in_keys))
-    client.subscribe(list(zip(route_in_keys, [1] * len(route_in_keys))))
-    client.publish(userdata['health'], 'healthy', qos=1, retain=True)
+    print('Client connected -- Listening to %s' % (SERVICE_NAME,))
+    client.subscribe(SERVICE_NAME)
 
 
 def create_client():
     try:
-        client = mqtt.Client()
-        client.on_connect = on_connect
-        # userdata = {
-        #     'route_in_keys': ['$share/{}/{}'.format(SERVICE_NAME, sub) for subkey, sub in conf[SERVICE_NAME].items() if subkey.endswith("sub") or subkey == 'rpc'],
-        #     'health': '/'.join([conf['all']['health_stub'], os.environ['HOSTNAME']]),
-        # }
-        # client.user_data_set(userdata)
-        #client.will_set(userdata['health'], 'unhealthy', qos=1, retain=True)
-        client.username_pw_set(username='username',
-                               password='password')
-        client.message_callback_add(SERVICE_NAME, rpc)
-        client.connect_async(host='host')
+        c = mqtt.Client()
+        c.on_connect = on_connect
+        c.on_message = rpc
+        c.connect(host='mqtt')
     except Exception as e:
         raise Exception("Failed to create client with error {}".format(e))
-    return client
+
+    print("connected")
+    return c
 
 
 if __name__ == '__main__':
     try:
+        time.sleep(5)
         client = create_client()
         client.loop_forever()
     except Exception as e:

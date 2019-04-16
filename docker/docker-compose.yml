@@ -4,7 +4,7 @@ services:
   tf-pose:
     build:
       context: ../.
-      dockerfile: docker/Dockerfile_gpu
+      dockerfile: docker/Dockerfile_cpu
     tty: true
     command: [ "python3", "run_service.py"]
     depends_on:
