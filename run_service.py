@@ -1,20 +1,25 @@
-
+import base64
 import json
 import time
+import uuid
 from threading import Thread
 
-import paho.mqtt.client as mqtt
-import tensorflow as tf
 import cv2
+import paho.mqtt.client as mqtt
+import redis
+import tensorflow as tf
+
 from tf_pose.estimator import TfPoseEstimator
 from tf_pose.networks import get_graph_path, model_wh
 
 SERVICE_NAME = "tf-pose"
+EXPIRATION_TIME = 180
+stream_running = False
 
 
 def rpc(client, userdata, message):
     try:
-        print('Got message %s' % (message.payload.decode('utf-8'),))
+        # print('Got message %s' % (message.payload.decode('utf-8'),))
         request = json.loads(message.payload.decode('utf-8'))
         reply_to = request.get('replyTo', 'error')
         method = request['method']
@@ -23,12 +28,12 @@ def rpc(client, userdata, message):
         if method == 'start':
             response = start_stream(params, client)
         elif method == 'stop':
-            pass
+            response = stop_stream()
         else:
             raise ValueError("Unknown method '{}'".format(method))
         response['apiVersion'] = 'beta'
-        #response['context'] = request['context']
-        #response['method'] = method
+        # response['context'] = request['context']
+        # response['method'] = method
         response['serviceName'] = SERVICE_NAME
     except Exception as e:
         print(e)
@@ -56,7 +61,7 @@ def _generate_error_message(error):
         msg = 'Incompatible type for param: \'{}\''.format("/".join(error.absolute_path))
     elif error_type == 'enum':
         msg = 'Expected param \'{}\' to be one of: {}'.format("/".join(error.absolute_path),
-                                                          ", ".join(error.validator_value))
+                                                              ", ".join(error.validator_value))
     else:
         print('Unknown cause, type: {}'.format(error_type))
         msg = 'Unknown error.'
@@ -65,6 +70,8 @@ def _generate_error_message(error):
 
 def start_stream(params, client):
     try:
+        global stream_running
+        stream_running = True
         Thread(name='publisher', target=on_stream, args=(client, params)).start()
 
         response = {'data': {'streamId': 'stream_id'}}
@@ -74,7 +81,15 @@ def start_stream(params, client):
     return response
 
 
+def stop_stream():
+    global stream_running
+    stream_running = False
+    return {'status': 'stopped'}
+
+
 def on_stream(client, params):
+    redis_store = redis.Redis(host='redis', password='password', port=6379, db=0)
+    global stream_running
     print(params)
     gpu_options = tf.GPUOptions()
     gpu_options.allow_growth = True
@@ -89,11 +104,28 @@ def on_stream(client, params):
     cam = cv2.VideoCapture(params['camera'])
     ret_val, image = cam.read()
 
-    while True:
+    while stream_running:
         ret_val, image = cam.read()
         humans = e.inference(image, resize_to_default=(w > 0 and h > 0), upsample_size=params['resize_out_ratio'])
-        str_humans = '; '.join([str(x) for x in humans])
-        client.publish(SERVICE_NAME + '/pose', str_humans)
+
+        all_humans = []
+        for human in humans:
+            body_parts = []
+            for part in human.body_parts.values():
+                body_parts.append({'index': part.part_idx, 'x': part.x, 'y': part.y, 'score': part.score})
+            all_humans.append(body_parts)
+
+        image_id = str(uuid.uuid4())
+
+        retval, buffer = cv2.imencode('.png', image)
+        png = base64.b64encode(buffer)
+
+        redis_store.set(image_id, png, ex=EXPIRATION_TIME)
+
+        frame = {'humans': all_humans, 'image': image_id}
+        frame_json = json.dumps(frame)
+
+        client.publish(SERVICE_NAME + '/pose', frame_json)
 
 
 def on_connect(client, userdata, flags, rc):
@@ -116,7 +148,7 @@ def create_client():
 
 if __name__ == '__main__':
     try:
-        time.sleep(5)
+        time.sleep(3)
         client = create_client()
         client.loop_forever()
     except Exception as e:

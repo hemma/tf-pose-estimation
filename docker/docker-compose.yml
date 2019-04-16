@@ -2,13 +2,15 @@ version: '2.3'
 
 services:
   tf-pose:
+    runtime: nvidia
     build:
       context: ../.
-      dockerfile: docker/Dockerfile_cpu
+      dockerfile: docker/Dockerfile_gpu
     tty: true
     command: [ "python3", "run_service.py"]
     depends_on:
       - mqtt
+      - redis
     scale: 1
 
   mqtt:
@@ -22,4 +24,18 @@ services:
       test: sh -c "curl mqtt:8888"
       timeout: 5s
       interval: 5s
+    restart: always
+
+  redis:
+    image: redis:5.0-alpine
+    ports:
+      - 6379:6379
+    command:
+      - redis-server
+      - --requirepass
+      - password
+      - --port 6379
+    healthcheck:
+      test: redis-cli -h localhost -a "password" ping 2>/dev/null | grep PONG
+      interval: 10s
     restart: always
