@@ -4,6 +4,7 @@ import time
 
 import cv2
 import numpy as np
+import tensorflow as tf
 
 from tf_pose.estimator import TfPoseEstimator
 from tf_pose.networks import get_graph_path, model_wh
@@ -21,7 +22,7 @@ fps_time = 0
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='tf-pose-estimation realtime webcam')
-    parser.add_argument('--camera', type=int, default=0)
+    parser.add_argument('--camera', type=str, default=0)
 
     parser.add_argument('--resize', type=str, default='0x0',
                         help='if provided, resize images before they are processed. default=0x0, Recommends : 432x368 or 656x368 or 1312x736 ')
@@ -33,12 +34,15 @@ if __name__ == '__main__':
                         help='for debug purpose, if enabled, speed for inference is dropped.')
     args = parser.parse_args()
 
+    gpu_options = tf.GPUOptions()
+    gpu_options.allow_growth = True
+
     logger.debug('initialization %s : %s' % (args.model, get_graph_path(args.model)))
     w, h = model_wh(args.resize)
     if w > 0 and h > 0:
-        e = TfPoseEstimator(get_graph_path(args.model), target_size=(w, h))
+        e = TfPoseEstimator(get_graph_path(args.model), target_size=(w, h), tf_config=tf.ConfigProto(gpu_options=gpu_options))
     else:
-        e = TfPoseEstimator(get_graph_path(args.model), target_size=(432, 368))
+        e = TfPoseEstimator(get_graph_path(args.model), target_size=(432, 368), tf_config=tf.ConfigProto(gpu_options=gpu_options))
     logger.debug('cam read+')
     cam = cv2.VideoCapture(args.camera)
     ret_val, image = cam.read()

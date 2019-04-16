@@ -6,6 +6,7 @@ import time
 from tf_pose import common
 import cv2
 import numpy as np
+import tensorflow as tf
 from tf_pose.estimator import TfPoseEstimator
 from tf_pose.networks import get_graph_path, model_wh
 
@@ -32,11 +33,14 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    gpu_options = tf.GPUOptions()
+    gpu_options.allow_growth = True
+
     w, h = model_wh(args.resize)
     if w == 0 or h == 0:
-        e = TfPoseEstimator(get_graph_path(args.model), target_size=(432, 368))
+        e = TfPoseEstimator(get_graph_path(args.model), target_size=(432, 368), tf_config=tf.ConfigProto(gpu_options=gpu_options))
     else:
-        e = TfPoseEstimator(get_graph_path(args.model), target_size=(w, h))
+        e = TfPoseEstimator(get_graph_path(args.model), target_size=(w, h), tf_config=tf.ConfigProto(gpu_options=gpu_options))
 
     # estimate human poses from a single image !
     image = common.read_imgfile(args.image, None, None)

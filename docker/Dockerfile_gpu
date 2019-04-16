@@ -8,9 +8,13 @@ FROM nvidia/cuda:10.0-cudnn7-devel
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
     swig python3-dev python3-pip git g++ wget make libprotobuf-dev protobuf-compiler libopencv-dev \
-    libgoogle-glog-dev libboost-all-dev libcaffe-cuda-dev libhdf5-dev libatlas-base-dev python3-setuptools
+    libgoogle-glog-dev libboost-all-dev libcaffe-cuda-dev libhdf5-dev libatlas-base-dev python3-setuptools python3-tk
 
 ADD ./ /tf-pose
+
+#WORKDIR /tf-pose/models/graph/cmu
+
+#RUN bash download.sh
 
 WORKDIR /tf-pose
 
@@ -23,9 +27,5 @@ RUN pip3 install -r requirements.txt
 WORKDIR /tf-pose/tf_pose/pafprocess
 
 RUN swig -python -c++ pafprocess.i && python3 setup.py build_ext --inplace
-
-#WORKDIR /tf-pose/models/graph/cmu
-
-#RUN bash download.sh
 
 WORKDIR /tf-pose
