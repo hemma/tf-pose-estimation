@@ -1,0 +1,25 @@
+version: '2.3'
+
+services:
+  tf-pose:
+    build:
+      context: ../.
+      dockerfile: docker/Dockerfile_gpu
+    tty: true
+    command: [ "python3", "run_service.py"]
+    depends_on:
+      - mqtt
+    scale: 1
+
+  mqtt:
+    image: erlio/docker-vernemq
+    environment:
+      - DOCKER_VERNEMQ_ALLOW_ANONYMOUS=on
+      - DOCKER_VERNEMQ_LOG__CONSOLE=off
+    ports:
+      - 1883:1883
+    healthcheck:
+      test: sh -c "curl mqtt:8888"
+      timeout: 5s
+      interval: 5s
+    restart: always
